@@ -5,7 +5,11 @@
   {mod, {client_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    lager,
+    jiffy,
+    uuid,
+    gun
    ]},
   {env,[]},
   {modules, []},
