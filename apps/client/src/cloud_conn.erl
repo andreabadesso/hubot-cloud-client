@@ -131,7 +131,7 @@ handle_info({http_request, Data}, State) ->
                            {Pid, Ref};
                          <<"DELETE">> ->
                            Ref = gun:post(Pid, Path, maps:to_list(Headers)),
-                           {Pid, Ref};
+                           {Pid, Ref}
                        end;
                      {error, _} -> error
                    end,
@@ -164,7 +164,6 @@ handle_info({http_request, Data}, State) ->
    },
   self() ! {send, Payload},
   {noreply, State};
-
 handle_info({app_connect, Data}, State) ->
   #{<<"user_id">> := UserId} = Data,
   case find(UserId, 2, State#state.client_list) of
