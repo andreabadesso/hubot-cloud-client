@@ -1,5 +1,5 @@
 {application, client,
- [{description, "An OTP application"},
+ [{description, "Hubot WS and HTTP Cloud Client"},
   {vsn, "0.1.0"},
   {registered, []},
   {mod, {client_app, []}},
