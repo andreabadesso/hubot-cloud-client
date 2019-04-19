@@ -11,6 +11,7 @@
          connect_http/2,
          handle_message/2,
          handle_info/2,
+         handle_cast/2,
          handle_call/3]).
 
 -record(state, {
@@ -45,6 +46,10 @@ handle_call(Msg, From, State) ->
   lager:info("Unhandled msg: ~p from: ~p", [Msg, From]),
   State.
 
+handle_cast(Msg, State) ->
+  lager:info("Unhandled cast: ~p", [Msg]),
+  State.
+
 handle_info(connect, State) ->
   lager:info("Connecting to socket"),
   {ok, _} = application:ensure_all_started(gun),
@@ -72,18 +77,17 @@ handle_info({gun_ws, _, _, {text, Msg}}, State) ->
   #{<<"message_type">> := MessageType} = Data,
   handle_message(MessageType, Data),
   {noreply, State};
-handle_info({gun_ws, _, _, Frame}, State) ->
+handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
 handle_info({gun_down, ConnPid, _, Reason, _, _}, #state{conn_pid = ConnPid} = State) ->
   lager:info("Received gundown on cloud conn"),
   gun:close(State#state.conn_pid),
   lager:info("Cloud socket closed with reason: ~p will try to reconnect in 5 seconds", [Reason]),
   lager:info("Closing client conns."),
-  Clients = State#state.client_list,
   [Pid ! die || {Pid, _} <- State#state.client_list],
   erlang:send_after(5 * 1000, self(), connect),
   {noreply, State#state{connected = false, client_list = []}};
-handle_info({gun_error, ConnPid, _, Reason}, State) ->
+handle_info({gun_error, _ConnPid, _, Reason}, State) ->
   lager:info("Gun error: ~p", [Reason]),
   {noreply, State};
 handle_info({gun_down, ConnPid, _, _, _, _}, State) ->
@@ -133,9 +137,12 @@ handle_info({http_request, Data}, State) ->
                            Ref = gun:post(Pid, Path, maps:to_list(Headers)),
                            {Pid, Ref}
                        end;
-                     {error, _} -> error
+                     {error, E} -> {error, E}
                    end,
   Response = case ConnectionData of
+               {error, Error} ->
+                 lager:info("Received error from connection. ~p", [Error]),
+                 #{ status => 500 };
                {ConnPid, ConnRef} ->
                  case gun:await(ConnPid, ConnRef) of
                    {response, fin, ResponseStatus, ResponseHeaders} ->
@@ -149,11 +156,7 @@ handle_info({http_request, Data}, State) ->
                         body => ResponseBody };
                    {error, timeout} ->
                      #{ status => 408 }
-                 end;
-               error ->
-                 lager:info("Received error from connection."),
-                 #{ status => 500 },
-                 {noreply, State}
+                 end
              end,
   lager:info("Response ~p", [Response]),
 
