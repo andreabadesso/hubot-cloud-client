@@ -23,8 +23,8 @@
 
 -define(PING_INTERVAL, 5000).
 
--define(CENTRAL_HOST, "localhost").
--define(CENTRAL_PORT, 3000).
+-define(CENTRAL_HOST, "hubot.local").
+-define(CENTRAL_PORT, 80).
 -define(CLOUD_HOST, "localhost").
 -define(CLOUD_PORT, 3000).
 -define(CLOUD_PATH, "/central").
@@ -110,6 +110,7 @@ handle_info({auth, success}, State) ->
 handle_info({auth, failure}, State) ->
   lager:info("Auth fail"),
   {noreply, State};
+
 handle_info({http_request, Data}, State) ->
   %% TODO: HTTP Requests to the central should be in the client_conn
   %% not here.
@@ -123,49 +124,37 @@ handle_info({http_request, Data}, State) ->
     <<"method">> := Method,
     <<"path">> := Path} = Request,
 
-  ConnectionData = case connect_http(?CENTRAL_HOST, ?CENTRAL_PORT) of
-                     {ok, Pid} ->
-                       case Method of
-                         <<"GET">> ->
-                           Ref = gun:get(Pid, Path, maps:to_list(Headers)),
-                           {Pid, Ref};
-                         <<"POST">> ->
-                           Ref = gun:post(Pid, Path, maps:to_list(Headers)),
-                           gun:data(Pid, Ref, fin, Body),
-                           {Pid, Ref};
-                         <<"DELETE">> ->
-                           Ref = gun:post(Pid, Path, maps:to_list(Headers)),
-                           {Pid, Ref}
-                       end;
-                     {error, E} -> {error, E}
-                   end,
-  Response = case ConnectionData of
-               {error, Error} ->
-                 lager:info("Received error from connection. ~p", [Error]),
-                 #{ status => 500 };
-               {ConnPid, ConnRef} ->
-                 case gun:await(ConnPid, ConnRef) of
-                   {response, fin, ResponseStatus, ResponseHeaders} ->
-                     lager:info("Received status and headers, there is no body to read."),
-                     #{ headers => maps:from_list(ResponseHeaders),
-                        status => ResponseStatus };
-                   {response, nofin, ResponseStatus, ResponseHeaders} ->
-                     {ok, ResponseBody} = gun:await_body(ConnPid, ConnRef),
-                     #{ headers => maps:from_list(ResponseHeaders),
-                        status => ResponseStatus,
-                        body => ResponseBody };
-                   {error, timeout} ->
-                     #{ status => 408 }
-                 end
-             end,
-  lager:info("Response ~p", [Response]),
+  Response = case central_request(Method, Path, Headers, Body) of
+    {error, Error} ->
+      lager:info("Received error from connection. ~p", [Error]),
+      #{ status => 500 };
+    {ConnPid, ConnRef} ->
+      case gun:await(ConnPid, ConnRef) of
+        {response, fin, ResponseStatus, ResponseHeaders} ->
+          lager:info("Received status and headers, there is no body to read."),
+          gun:close(ConnPid),
+          #{ headers => maps:from_list(ResponseHeaders),
+             status => ResponseStatus };
+        {response, nofin, ResponseStatus, ResponseHeaders} ->
+          {ok, ResponseBody} = gun:await_body(ConnPid, ConnRef),
+          gun:close(ConnPid),
+          #{ headers => maps:from_list(ResponseHeaders),
+             status => ResponseStatus,
+             body => ResponseBody };
+        {error, timeout} ->
+          gun:close(ConnPid),
+          #{ status => 408 }
+      end
+  end,
 
   Payload = #{
     message_type => <<"http">>,
     uuid => Uuid,
     data => Response
    },
+
   self() ! {send, Payload},
+
   {noreply, State};
 handle_info({app_connect, Data}, State) ->
   #{<<"user_id">> := UserId} = Data,
@@ -231,6 +220,26 @@ connect_http(Host, Port) ->
       end;
     {error, Msg} ->
       {error, Msg}
+  end.
+
+central_request(Method, Path, Headers, Body) ->
+  case connect_http(?CENTRAL_HOST, ?CENTRAL_PORT) of
+    {ok, Pid} ->
+      case Method of
+        <<"GET">> ->
+          Ref = gun:get(Pid, Path, maps:to_list(Headers)),
+          gun:data(Pid, Ref, fin, <<"">>),
+          {Pid, Ref};
+        <<"POST">> ->
+          Ref = gun:post(Pid, Path, maps:to_list(Headers)),
+          gun:data(Pid, Ref, fin, Body),
+          {Pid, Ref};
+        <<"DELETE">> ->
+          Ref = gun:post(Pid, Path, maps:to_list(Headers)),
+          gun:data(Pid, Ref, fin, Body),
+          {Pid, Ref}
+      end;
+    {error, E} -> {error, E}
   end.
 
 handle_message(<<"auth_req">>, _) ->
