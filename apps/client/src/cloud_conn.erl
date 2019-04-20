@@ -12,7 +12,9 @@
          handle_message/2,
          handle_info/2,
          handle_cast/2,
-         handle_call/3]).
+         handle_call/3,
+         terminate/2,
+         code_change/3]).
 
 -record(state, {
           conn_pid    = undefined,
@@ -49,6 +51,13 @@ handle_call(Msg, From, State) ->
 handle_cast(Msg, State) ->
   lager:info("Unhandled cast: ~p", [Msg]),
   State.
+
+
+terminate(_Reason, _State) ->
+  ok.
+
+code_change(_OldVsn, State, _Extra) ->
+  {ok, State}.
 
 handle_info(connect, State) ->
   lager:info("Connecting to socket"),
