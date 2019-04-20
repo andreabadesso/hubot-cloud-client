@@ -234,8 +234,12 @@ central_request(Method, Path, Headers, Body) ->
           Ref = gun:post(Pid, Path, maps:to_list(Headers)),
           gun:data(Pid, Ref, fin, Body),
           {Pid, Ref};
+        <<"PUT">> ->
+          Ref = gun:put(Pid, Path, maps:to_list(Headers)),
+          gun:data(Pid, Ref, fin, Body),
+          {Pid, Ref};
         <<"DELETE">> ->
-          Ref = gun:post(Pid, Path, maps:to_list(Headers)),
+          Ref = gun:delete(Pid, Path, maps:to_list(Headers)),
           gun:data(Pid, Ref, fin, Body),
           {Pid, Ref}
       end;
