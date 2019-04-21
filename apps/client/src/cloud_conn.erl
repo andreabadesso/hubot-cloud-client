@@ -29,10 +29,9 @@
          }).
 
 -define(PING_INTERVAL, 5000).
-
 -define(CENTRAL_PORT, 80).
 -define(CLOUD_PORT, 80).
--define(CLOUD_PATH, "/central").
+-define(CLOUD_PATH, "/pi").
 
 start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

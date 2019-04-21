@@ -1,0 +1,14 @@
+version: '2'
+services:
+  cloud-server:
+    image: "hubot/new-cloud-client"
+    restart: 'always'
+    environment:
+      - PG_HOST=postgres
+      - PG_USER=hubot
+      - PG_PASS=hubot
+      - PG_DATABASE=hubot
+    ports:
+      - "3008:3000"
+    volumes:
+      - ./hubot_config.json:/opt/hubot_config.json
