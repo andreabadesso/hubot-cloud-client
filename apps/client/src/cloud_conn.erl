@@ -198,7 +198,7 @@ handle_info({app_connect, Data}, State) ->
   case find(UserId, 2, State#state.client_list) of
     none ->
       lager:info("Not found on current list, adding it."),
-      {ok, Pid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id),
+      {ok, Pid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id, State#state.hubot_server),
       lager:info("Client conn started for user ~p: ~p", [UserId, Pid]),
       NewClientList = [{Pid, UserId} | State#state.client_list],
       {noreply, State#state{client_list = NewClientList}};
@@ -208,7 +208,7 @@ handle_info({app_connect, Data}, State) ->
       %% Already connected, will remove old one before adding
       CleanList = lists:delete(Old, State#state.client_list),
       Pid ! die,
-      {ok, NewPid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id),
+      {ok, NewPid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id, State#state.hubot_server),
       lager:info("Client conn started for user ~p: ~p", [UserId, NewPid]),
       NewClientList = [{NewPid, UserId} | CleanList],
       {noreply, State#state{client_list = NewClientList}}

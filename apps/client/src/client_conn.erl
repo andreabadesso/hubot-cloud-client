@@ -6,7 +6,7 @@
 -behaviour(gen_server).
 
 -export([
-         start/4,
+         start/5,
          init/1,
          handle_message/3,
          handle_info/2,
@@ -14,31 +14,35 @@
          handle_call/3]).
 
 -record(state, {
-          conn_pid    = undefined,
-          streams     = undefined,
-          protocol    = undefined,
-          connected   = false,
-          user_id     = undefined,
-          controller  = undefined,
-          priv_key    = undefined,
-          central_id  = undefined
+          conn_pid      = undefined,
+          streams       = undefined,
+          protocol      = undefined,
+          connected     = false,
+          user_id       = undefined,
+          controller    = undefined,
+          priv_key      = undefined,
+          central_id    = undefined,
+          hubot_server  = undefined
          }).
 
--define(CENTRAL_HOST, "hubot.local").
 -define(CENTRAL_PORT, 3000).
 -define(CENTRAL_PATH, "/websocket").
 -define(PING_INTERVAL, 5000).
 
-start(UserId, Controller, PrivKey, CentralId) ->
-    gen_server:start(?MODULE, [UserId, Controller, PrivKey, CentralId], []).
+start(UserId, Controller, PrivKey, CentralId, HubotServer) ->
+    gen_server:start(?MODULE, [UserId, Controller, PrivKey, CentralId, HubotServer], []).
 
 %% ===================================================================
 %% API functions
 %% ===================================================================
 
-init([UserId, Controller, PrivKey, CentralId]) ->
+init([UserId, Controller, PrivKey, CentralId, HubotServer]) ->
   lager:info("Received ~p, ~p on init", [UserId, Controller]),
-  State = #state{user_id = UserId, controller = Controller, priv_key = PrivKey, central_id = CentralId},
+  State = #state{user_id = UserId,
+                 controller = Controller,
+                 priv_key = PrivKey,
+                 central_id = CentralId,
+                 hubot_server = HubotServer},
   erlang:send_after(5, self(), connect),
   timer:send_interval(?PING_INTERVAL, ping),
   {ok, State}.
@@ -53,7 +57,7 @@ handle_cast(_, State) ->
 handle_info(connect, State) ->
   lager:info("Connecting to socket"),
   {ok, _} = application:ensure_all_started(gun),
-  case gun:open(?CENTRAL_HOST, ?CENTRAL_PORT) of
+  case gun:open(State#state.hubot_server, ?CENTRAL_PORT) of
     {ok, ConnPid} ->
       case gun:await_up(ConnPid) of
         {ok, Protocol} ->
