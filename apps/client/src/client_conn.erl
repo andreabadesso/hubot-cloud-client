@@ -6,10 +6,11 @@
 -behaviour(gen_server).
 
 -export([
-         start/2,
+         start/4,
          init/1,
          handle_message/3,
          handle_info/2,
+         handle_cast/2,
          handle_call/3]).
 
 -record(state, {
@@ -18,7 +19,9 @@
           protocol    = undefined,
           connected   = false,
           user_id     = undefined,
-          controller  = undefined
+          controller  = undefined,
+          priv_key    = undefined,
+          central_id  = undefined
          }).
 
 -define(CENTRAL_HOST, "hubot.local").
@@ -26,22 +29,25 @@
 -define(CENTRAL_PATH, "/websocket").
 -define(PING_INTERVAL, 5000).
 
-start(UserId, Controller) ->
-    gen_server:start(?MODULE, [UserId, Controller], []).
+start(UserId, Controller, PrivKey, CentralId) ->
+    gen_server:start(?MODULE, [UserId, Controller, PrivKey, CentralId], []).
 
 %% ===================================================================
 %% API functions
 %% ===================================================================
 
-init([UserId, Controller]) ->
+init([UserId, Controller, PrivKey, CentralId]) ->
   lager:info("Received ~p, ~p on init", [UserId, Controller]),
-  State = #state{user_id = UserId, controller = Controller},
+  State = #state{user_id = UserId, controller = Controller, priv_key = PrivKey, central_id = CentralId},
   erlang:send_after(5, self(), connect),
   timer:send_interval(?PING_INTERVAL, ping),
   {ok, State}.
 
 handle_call(Msg, From, State) ->
   lager:info("Unhandled msg: ~p from: ~p", [Msg, From]),
+  State.
+
+handle_cast(_, State) ->
   State.
 
 handle_info(connect, State) ->
@@ -75,25 +81,30 @@ handle_info({gun_upgrade, _, _, [<<"websocket">>], _}, State) ->
   lager:info("Success on upgrade."),
   {noreply, State#state{connected = true}};
 handle_info({gun_ws, _, _, {text, Msg}}, State) ->
-  lager:info("Received message: ~p", [Msg]),
   Data = jiffy:decode(Msg, [return_maps]),
   #{<<"message_type">> := MessageType} = Data,
   handle_message(MessageType, Data, State),
   {noreply, State};
-handle_info({gun_ws, _, _, Frame}, State) ->
-  lager:info("Received message: ~p", [Frame]),
+handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
 handle_info({gun_down, _, _, Reason, _, _}, State) ->
   gun:close(State#state.conn_pid),
   lager:info("Cloud socket closed with reason: ~p will try to reconnect in 5 seconds", [Reason]),
   erlang:send_after(5 * 1000, self(), connect),
   {noreply, State#state{connected = false}};
+handle_info({send, Message}, State) ->
+  lager:info("Sending message to socket ~p", [Message]),
+  gun:ws_send(State#state.conn_pid, {text, jiffy:encode(Message)}),
+  {noreply, State};
 handle_info({auth, send}, State) ->
+  Claims = #{
+    <<"UUID">> => State#state.user_id
+   },
+  {ok, Token} = jwt:encode(<<"HS256">>, Claims, State#state.priv_key),
   gun:ws_send(State#state.conn_pid, {text, jiffy:encode(#{
                                              message_type => <<"auth">>,
-                                             token => <<"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJVVUlEIjoiNzU4NzQzNDEtZDQ0ZC00N2Y3LTkyY2ItODhhZTc0Y2ZmMTllIiwicmVnaXN0ZXJlZCI6dHJ1ZSwic2VyaWFsIjoiNDItN2QtYjYtMjAtODAtOTgiLCJuYW1lIjoiUEVOU0kgSWJpdHVydW5hIDM1IiwiaWF0IjoxNTU1NTQ5NTE1fQ.UqoSPjYNXkIcN8eHCLMKjMA8IeqyHimYSXj0Dw21ows">>,
-                                             central_id => 3,
-                                             user_id => 1
+                                             token => Token,
+                                             central_id => State#state.central_id
                                             })}),
   {noreply, State};
 handle_info({auth, success}, State) ->
@@ -108,11 +119,11 @@ handle_info(Msg, State) ->
   lager:info("Unhandled: ~p", [Msg]),
   {noreply, State}.
 
-handle_message(<<"auth_req">>, Data, _) ->
+handle_message(<<"auth_req">>, _, _) ->
   self() ! {auth, send};
-handle_message(<<"auth_success">>, Data, _) ->
+handle_message(<<"auth_success">>, _, _) ->
   self() ! {auth, success};
-handle_message(<<"auth_error">>, Data, _) ->
+handle_message(<<"auth_error">>, _, _) ->
   self() ! {auth, failure};
-handle_message(Message, Data, State) ->
+handle_message(_, Data, State) ->
   State#state.controller ! {from_ws, State#state.user_id, Data}.

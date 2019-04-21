@@ -9,7 +9,8 @@
     lager,
     jiffy,
     uuid,
-    gun
+    gun,
+    jwt
    ]},
   {env,[]},
   {modules, []},

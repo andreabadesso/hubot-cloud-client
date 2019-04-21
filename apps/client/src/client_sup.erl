@@ -26,7 +26,7 @@ start_link() ->
 %% Supervisor callbacks
 %%====================================================================
 
-init([]) ->
+init(_) ->
   CloudConn = {cloud_conn,
                {cloud_conn, start_link, []},
                permanent,

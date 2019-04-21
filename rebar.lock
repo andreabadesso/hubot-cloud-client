@@ -1,5 +1,6 @@
 {"1.1.0",
-[{<<"cowlib">>,
+[{<<"base64url">>,{pkg,<<"base64url">>,<<"0.0.1">>},1},
+ {<<"cowlib">>,
   {git,"https://github.com/ninenines/cowlib",
        {ref,"106ba84bb04537879d8ce59321a04e0682110b91"}},
   1},
@@ -11,6 +12,11 @@
  {<<"jiffy">>,
   {git,"https://github.com/davisp/jiffy",
        {ref,"c942525130ff0271bd318715406f234c0dc9bc5a"}},
+  0},
+ {<<"jsx">>,{pkg,<<"jsx">>,<<"2.8.0">>},1},
+ {<<"jwt">>,
+  {git,"https://github.com/artemeff/jwt",
+       {ref,"6fd754fec1cd2e4577a5d7121233371900aa44e7"}},
   0},
  {<<"lager">>,
   {git,"https://github.com/erlang-lager/lager",
@@ -26,5 +32,7 @@
   0}]}.
 [
 {pkg_hash,[
- {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>}]}
+ {<<"base64url">>, <<"36A90125F5948E3AFD7BE97662A1504B934DD5DAC78451CA6E9ABF85A10286BE">>},
+ {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
+ {<<"jsx">>, <<"749BEC6D205C694AE1786D62CEA6CC45A390437E24835FD16D12D74F07097727">>}]}
 ].

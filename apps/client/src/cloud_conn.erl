@@ -17,18 +17,21 @@
          code_change/3]).
 
 -record(state, {
-          conn_pid    = undefined,
-          streams     = undefined,
-          connected   = false,
-          client_list = []
+          conn_pid      = undefined,
+          streams       = undefined,
+          connected     = false,
+          client_list   = [],
+          central_id    = undefined,
+          priv_key      = undefined,
+          hubot_api     = undefined,
+          hubot_server  = undefined,
+          cloud_host    = undefined
          }).
 
 -define(PING_INTERVAL, 5000).
 
--define(CENTRAL_HOST, "hubot.local").
 -define(CENTRAL_PORT, 80).
--define(CLOUD_HOST, "localhost").
--define(CLOUD_PORT, 3000).
+-define(CLOUD_PORT, 80).
 -define(CLOUD_PATH, "/central").
 
 start_link() ->
@@ -39,7 +42,19 @@ start_link() ->
 %% ===================================================================
 
 init(_) ->
-  State = #state{},
+  Config = read_config(),
+  #{<<"centralUUID">> := CentralId,
+    <<"privKey">> := PrivKey,
+    <<"hubotApi">> := HubotApi,
+    <<"cloudHost">> := CloudHost,
+    <<"hubotServer">> := HubotServer } = Config,
+  State = #state{
+             central_id = CentralId,
+             priv_key = PrivKey,
+             hubot_api = binary_to_list(HubotApi),
+             hubot_server = binary_to_list(HubotServer),
+             cloud_host = binary_to_list(CloudHost)
+            },
   erlang:send_after(5, self(), connect),
   timer:send_interval(?PING_INTERVAL, ping),
   {ok, State}.
@@ -52,7 +67,6 @@ handle_cast(Msg, State) ->
   lager:info("Unhandled cast: ~p", [Msg]),
   State.
 
-
 terminate(_Reason, _State) ->
   ok.
 
@@ -60,9 +74,9 @@ code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
 handle_info(connect, State) ->
-  lager:info("Connecting to socket"),
+  lager:info("Connecting to socket ~p", [State#state.cloud_host]),
   {ok, _} = application:ensure_all_started(gun),
-  case connect_http(?CLOUD_HOST, ?CLOUD_PORT) of
+  case connect_http(State#state.cloud_host, ?CLOUD_PORT) of
     {ok, ConnPid} ->
       lager:info("HTTP Connected, upgrading connection"),
       erlang:send_after(5, self(), upgrade_connection),
@@ -107,17 +121,20 @@ handle_info({send, Data}, State) ->
   gun:ws_send(State#state.conn_pid, {text, jiffy:encode(Data)}),
   {noreply, State};
 handle_info({auth, send}, State) ->
-  gun:ws_send(State#state.conn_pid, {text, jiffy:encode(#{
-                                             message_type => <<"auth">>,
-                                             token => <<"123">>,
-                                             central_id => <<"3">>
-                                            })}),
+  Token = sign(#{ <<"central_id">> => State#state.central_id }, State#state.priv_key),
+  Payload = jiffy:encode(#{ message_type => <<"auth">>,
+                  token => Token,
+                  central_id => State#state.central_id
+                }),
+  lager:info("Sending: ~p", [Payload]),
+  gun:ws_send(State#state.conn_pid, {text, Payload}),
   {noreply, State};
 handle_info({auth, success}, State) ->
   lager:info("Auth success"),
   {noreply, State};
 handle_info({auth, failure}, State) ->
-  lager:info("Auth fail"),
+  lager:info("Auth fail, will retry in 5 seconds"),
+  erlang:send_after(5 * 1000, self(), connect),
   {noreply, State};
 
 handle_info({http_request, Data}, State) ->
@@ -133,28 +150,28 @@ handle_info({http_request, Data}, State) ->
     <<"method">> := Method,
     <<"path">> := Path} = Request,
 
-  Response = case central_request(Method, Path, Headers, Body) of
-    {error, Error} ->
-      lager:info("Received error from connection. ~p", [Error]),
-      #{ status => 500 };
-    {ConnPid, ConnRef} ->
-      case gun:await(ConnPid, ConnRef) of
-        {response, fin, ResponseStatus, ResponseHeaders} ->
-          lager:info("Received status and headers, there is no body to read."),
-          gun:close(ConnPid),
-          #{ headers => maps:from_list(ResponseHeaders),
-             status => ResponseStatus };
-        {response, nofin, ResponseStatus, ResponseHeaders} ->
-          {ok, ResponseBody} = gun:await_body(ConnPid, ConnRef),
-          gun:close(ConnPid),
-          #{ headers => maps:from_list(ResponseHeaders),
-             status => ResponseStatus,
-             body => ResponseBody };
-        {error, timeout} ->
-          gun:close(ConnPid),
-          #{ status => 408 }
-      end
-  end,
+  Response = case central_request(Method, Path, Headers, Body, State#state.hubot_server, ?CENTRAL_PORT) of
+               {error, Error} ->
+                 lager:info("Received error from connection. ~p", [Error]),
+                 #{ status => 500 };
+               {ConnPid, ConnRef} ->
+                 case gun:await(ConnPid, ConnRef) of
+                   {response, fin, ResponseStatus, ResponseHeaders} ->
+                     lager:info("Received status and headers, there is no body to read."),
+                     gun:close(ConnPid),
+                     #{ headers => maps:from_list(ResponseHeaders),
+                        status => ResponseStatus };
+                   {response, nofin, ResponseStatus, ResponseHeaders} ->
+                     {ok, ResponseBody} = gun:await_body(ConnPid, ConnRef),
+                     gun:close(ConnPid),
+                     #{ headers => maps:from_list(ResponseHeaders),
+                        status => ResponseStatus,
+                        body => ResponseBody };
+                   {error, timeout} ->
+                     gun:close(ConnPid),
+                     #{ status => 408 }
+                 end
+             end,
 
   Payload = #{
     message_type => <<"http">>,
@@ -165,12 +182,24 @@ handle_info({http_request, Data}, State) ->
   self() ! {send, Payload},
 
   {noreply, State};
+handle_info({app_ws, Payload}, State) ->
+  #{<<"user_id">> := UserId,
+    <<"message">> := Message} = Payload,
+  case find(UserId, 2, State#state.client_list) of
+    none ->
+      %% TODO: Send disconnect signal to cloud
+      lager:info("UserId not on clients list, ignoring..");
+    {Pid, _} ->
+      %% Get message from the payload
+      Pid ! {send, Message}
+  end,
+  {noreply, State};
 handle_info({app_connect, Data}, State) ->
   #{<<"user_id">> := UserId} = Data,
   case find(UserId, 2, State#state.client_list) of
     none ->
       lager:info("Not found on current list, adding it."),
-      {ok, Pid} = client_conn:start(UserId, self()),
+      {ok, Pid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id),
       lager:info("Client conn started for user ~p: ~p", [UserId, Pid]),
       NewClientList = [{Pid, UserId} | State#state.client_list],
       {noreply, State#state{client_list = NewClientList}};
@@ -180,7 +209,7 @@ handle_info({app_connect, Data}, State) ->
       %% Already connected, will remove old one before adding
       CleanList = lists:delete(Old, State#state.client_list),
       Pid ! die,
-      {ok, NewPid} = client_conn:start(UserId, self()),
+      {ok, NewPid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id),
       lager:info("Client conn started for user ~p: ~p", [UserId, NewPid]),
       NewClientList = [{NewPid, UserId} | CleanList],
       {noreply, State#state{client_list = NewClientList}}
@@ -231,8 +260,8 @@ connect_http(Host, Port) ->
       {error, Msg}
   end.
 
-central_request(Method, Path, Headers, Body) ->
-  case connect_http(?CENTRAL_HOST, ?CENTRAL_PORT) of
+central_request(Method, Path, Headers, Body, Host, Port) ->
+  case connect_http(Host, Port) of
     {ok, Pid} ->
       case Method of
         <<"GET">> ->
@@ -259,18 +288,24 @@ handle_message(<<"auth_req">>, _) ->
   self() ! {auth, send};
 handle_message(<<"auth_success">>, _) ->
   self() ! {auth, success};
-handle_message(<<"auth_error">>, _) ->
+handle_message(<<"auth_fail">>, _) ->
   self() ! {auth, failure};
 handle_message(<<"app_connect">>,Data) ->
   self() ! {app_connect, Data};
 handle_message(<<"app_disconnect">>, Data) ->
   self() ! {app_disconnect, Data};
+handle_message(<<"websocket">>, Data) ->
+  self() ! {app_ws, Data};
 handle_message(<<"http">>, Data) ->
   lager:info("Received http request"),
   self() ! {http_request, Data};
 handle_message(Message, Data) ->
   lager:info("Unhandled ~p: ~p", [Message, Data]).
 
+% TODO: Move this to a dedicated library
+sign(Claims, PrivKey) ->
+  {ok, Token} = jwt:encode(<<"HS256">>, Claims, PrivKey),
+  Token.
 
 find(K, Index, [H|T]) ->
   case Index of
@@ -286,3 +321,10 @@ find(K, Index, [H|T]) ->
       end
   end;
 find(_, _, []) -> none.
+
+read_config() ->
+  % Read config file from env
+  ConfigPath = os:getenv("CONFIG_PATH", "/opt/hubot_config.json"),
+  lager:info("Config path: ~p", [ConfigPath]),
+  {ok, ConfigData} = file:read_file(ConfigPath),
+  jiffy:decode(ConfigData, [return_maps]).
