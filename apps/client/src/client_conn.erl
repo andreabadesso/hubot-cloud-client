@@ -60,14 +60,14 @@ handle_info(connect, State) ->
           lager:info("HTTP Connected, upgrading connection"),
           erlang:send_after(5, self(), upgrade_connection),
           {noreply, State#state{conn_pid = ConnPid, protocol =  Protocol}};
-        {error, _} ->
-          lager:info("Connection failed, reconnecting in 5s"),
+        {error, Error} ->
+          lager:info("(Await Up) Connection failed, reconnecting in 5s: ~p", [Error]),
           gun:close(ConnPid),
           erlang:send_after(5 * 1000, self(), connect),
           {noreply, State}
       end;
-    {error, _} ->
-      lager:info("Connection failed, reconnecting in 5s"),
+    {error, Error} ->
+      lager:info("(Gun Up) Connection failed, reconnecting in 5s: ~p", [Error]),
       erlang:send_after(5 * 1000, self(), connect),
       {noreply, State}
   end;
