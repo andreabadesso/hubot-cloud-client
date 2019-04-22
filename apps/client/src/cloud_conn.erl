@@ -194,24 +194,24 @@ handle_info({app_ws, Payload}, State) ->
   end,
   {noreply, State};
 handle_info({app_connect, Data}, State) ->
+  lager:info("Received app_connect"),
   #{<<"user_id">> := UserId} = Data,
   case find(UserId, 2, State#state.client_list) of
     none ->
       lager:info("Not found on current list, adding it."),
       {ok, Pid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id, State#state.hubot_server),
+      erlang:monitor(process, Pid),
       lager:info("Client conn started for user ~p: ~p", [UserId, Pid]),
       NewClientList = [{Pid, UserId} | State#state.client_list],
       {noreply, State#state{client_list = NewClientList}};
-    Old ->
-      lager:info("Found it on the list already, ~p", [Old]),
-      {Pid, _} = Old,
-      %% Already connected, will remove old one before adding
-      CleanList = lists:delete(Old, State#state.client_list),
+    {Pid, _} ->
+      %% There is an connection already, we should kill it.
       Pid ! die,
-      {ok, NewPid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id, State#state.hubot_server),
-      lager:info("Client conn started for user ~p: ~p", [UserId, NewPid]),
-      NewClientList = [{NewPid, UserId} | CleanList],
-      {noreply, State#state{client_list = NewClientList}}
+      %% Wait until the socket is dead and connect
+      %% TODO: Wait until the socket is terminated instead of
+      %% randomly waiting 1s
+      erlang:send_after(500, self(), {app_connect, Data}),
+      {noreply, State}
   end;
 handle_info({app_disconnect, Data}, State) ->
   #{<<"user_id">> := UserId} = Data,
@@ -228,6 +228,7 @@ handle_info({app_disconnect, Data}, State) ->
       {noreply, State}
   end;
 handle_info({'DOWN', Ref, process, Pid, Reason}, State) ->
+  lager:info("Process ~p died", [Pid]),
   erlang:demonitor(Ref),
   Element = find(Pid, 1, State#state.client_list),
   NewClientList = lists:delete(Element, State#state.client_list),
