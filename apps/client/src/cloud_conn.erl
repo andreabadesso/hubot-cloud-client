@@ -77,7 +77,6 @@ handle_info(connect, State) ->
   {ok, _} = application:ensure_all_started(gun),
   case connect_http(State#state.cloud_host, ?CLOUD_PORT) of
     {ok, ConnPid} ->
-      lager:info("HTTP Connected, upgrading connection"),
       erlang:send_after(5, self(), upgrade_connection),
       {noreply, State#state{conn_pid = ConnPid}};
     {error, _} ->
@@ -102,10 +101,10 @@ handle_info({gun_ws, _, _, {text, Msg}}, State) ->
 handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
 handle_info({gun_down, ConnPid, _, Reason, _, _}, #state{conn_pid = ConnPid} = State) ->
-  lager:info("Received gundown on cloud conn"),
   gun:close(State#state.conn_pid),
   lager:info("Cloud socket closed with reason: ~p will try to reconnect in 5 seconds", [Reason]),
-  lager:info("Closing client conns."),
+  %% Close every WS connection to the local server when the WS connection
+  %% to the cloud is closed.
   [Pid ! die || {Pid, _} <- State#state.client_list],
   erlang:send_after(5 * 1000, self(), connect),
   {noreply, State#state{connected = false, client_list = []}};
@@ -182,16 +181,18 @@ handle_info({http_request, Data}, State) ->
 
   {noreply, State};
 handle_info({app_ws, Payload}, State) ->
+  %% TODO: add a guard to prevent sending a message if the connection
+  %% is not up yet.
   #{<<"user_id">> := UserId,
     <<"message">> := Message} = Payload,
   case find(UserId, 2, State#state.client_list) of
     none ->
       %% If the cloud is sending the message, we are safe
       %% to trust this connection and add it.
-      lager:info("UserId was not on clients list, adding it.."),
+      lager:info("User ~p was not on client_list, will add it.", [UserId]),
       self() ! {app_connect, Payload},
 
-      %% Send the message again in 500ms
+      %% Send the message again in 500ms so the socket has time to connect.
       erlang:send_after(500, self(), {app_ws, Payload});
     {Pid, _} ->
       %% Get message from the payload
@@ -225,17 +226,16 @@ handle_info({app_disconnect, Data}, State) ->
   case find(UserId, 2, State#state.client_list) of
     {Pid, _} ->
       %% Kill process and remove from list.
-      lager:info("App disconnected, removing Pid ~p", [Pid]),
+      lager:info("User ~p connection died. (Pid: ~p)", [UserId, Pid]),
       Element = find(Pid, 1, State#state.client_list),
       NewClientList = lists:delete(Element, State#state.client_list),
       Pid ! die,
       {noreply, State#state{client_list = NewClientList}};
     none ->
-      lager:info("Received app disconnect but UserId was already not on the socket list."),
+      lager:info("Received app disconnect from user: ~p but was already not on the socket list.", [UserId]),
       {noreply, State}
   end;
 handle_info({'DOWN', Ref, process, Pid, Reason}, State) ->
-  lager:info("Process ~p died", [Pid]),
   erlang:demonitor(Ref),
   Element = find(Pid, 1, State#state.client_list),
   NewClientList = lists:delete(Element, State#state.client_list),
@@ -258,7 +258,6 @@ connect_http(Host, Port) ->
     {ok, ConnPid} ->
       case gun:await_up(ConnPid) of
         {ok, _} ->
-          lager:info("HTTP Connected."),
           {ok, ConnPid};
         {error, Msg} ->
           {error, Msg}
