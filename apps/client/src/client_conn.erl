@@ -101,6 +101,7 @@ handle_info({send, Message}, State) ->
   gun:ws_send(State#state.conn_pid, {text, jiffy:encode(Message)}),
   {noreply, State};
 handle_info({auth, send}, State) ->
+  lager:info("Sending auth"),
   Claims = #{
     <<"UUID">> => State#state.user_id
    },
@@ -118,6 +119,9 @@ handle_info({auth, failure}, State) ->
   lager:info("Auth fail"),
   {noreply, State};
 handle_info(die, State) ->
+  %% Killing ws connection and process
+  lager:info("Die!"),
+  gun:close(State#state.conn_pid),
   {stop, normal, State};
 handle_info(Msg, State) ->
   lager:info("Unhandled: ~p", [Msg]),
