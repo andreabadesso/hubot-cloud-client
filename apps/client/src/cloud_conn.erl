@@ -186,8 +186,13 @@ handle_info({app_ws, Payload}, State) ->
     <<"message">> := Message} = Payload,
   case find(UserId, 2, State#state.client_list) of
     none ->
-      %% TODO: Send disconnect signal to cloud
-      lager:info("UserId not on clients list, ignoring..");
+      %% If the cloud is sending the message, we are safe
+      %% to trust this connection and add it.
+      lager:info("UserId was not on clients list, adding it.."),
+      self() ! {app_connect, Payload},
+
+      %% Send the message again in 500ms
+      erlang:send_after(500, self(), {app_ws, Payload});
     {Pid, _} ->
       %% Get message from the payload
       Pid ! {send, Message}
@@ -199,18 +204,20 @@ handle_info({app_connect, Data}, State) ->
   case find(UserId, 2, State#state.client_list) of
     none ->
       lager:info("Not found on current list, adding it."),
-      {ok, Pid} = client_conn:start(UserId, self(), State#state.priv_key, State#state.central_id, State#state.hubot_server),
+      {ok, Pid} = client_conn:start(UserId,
+                                    self(),
+                                    State#state.priv_key,
+                                    State#state.central_id,
+                                    State#state.hubot_server),
       erlang:monitor(process, Pid),
       lager:info("Client conn started for user ~p: ~p", [UserId, Pid]),
       NewClientList = [{Pid, UserId} | State#state.client_list],
       {noreply, State#state{client_list = NewClientList}};
     {Pid, _} ->
-      %% There is an connection already, we should kill it.
+      %% There was already an app connected with the same UserId,
+      %% we will just kill it for now as the cloud will deal with
+      %% closing the old app connection and creating the new one.
       Pid ! die,
-      %% Wait until the socket is dead and connect
-      %% TODO: Wait until the socket is terminated instead of
-      %% randomly waiting 1s
-      erlang:send_after(500, self(), {app_connect, Data}),
       {noreply, State}
   end;
 handle_info({app_disconnect, Data}, State) ->
