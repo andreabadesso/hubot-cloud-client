@@ -3,11 +3,6 @@ services:
   cloud-server:
     image: "hubotautomation/cloud-client"
     restart: 'always'
-    environment:
-      - PG_HOST=postgres
-      - PG_USER=hubot
-      - PG_PASS=hubot
-      - PG_DATABASE=hubot
     ports:
       - "3008:3000"
     volumes:

@@ -87,16 +87,22 @@ handle_info(connect, State) ->
 handle_info(upgrade_connection, State) ->
   gun:ws_upgrade(State#state.conn_pid, ?CLOUD_PATH),
   {noreply, State};
-handle_info(ping, State) ->
+handle_info(ping, #state{connected = true} = State) ->
   gun:ws_send(State#state.conn_pid, ping),
+  {noreply, State};
+handle_info(ping, State) ->
+  lager:info("Was going to ping client but not connected."),
   {noreply, State};
 handle_info({gun_upgrade, _, _, [<<"websocket">>], _}, State) ->
   lager:info("Success on upgrade."),
   {noreply, State#state{connected = true}};
-handle_info({gun_ws, _, _, {text, Msg}}, State) ->
+handle_info({gun_ws, _, _, {text, Msg}}, #state{connected = true} = State) ->
   Data = jiffy:decode(Msg, [return_maps]),
   #{<<"message_type">> := MessageType} = Data,
   handle_message(MessageType, Data),
+  {noreply, State};
+handle_info({gun_ws, _, _, {text, Msg}}, State) ->
+  lager:info("Was going to send ~p but not connected.", [Msg]),
   {noreply, State};
 handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
