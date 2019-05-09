@@ -78,7 +78,7 @@ handle_info(connect, State) ->
 handle_info(upgrade_connection, State) ->
   gun:ws_upgrade(State#state.conn_pid, ?CENTRAL_PATH),
   {noreply, State};
-handle_info(ping, State) ->
+handle_info(ping, #state{connected = true} = State) ->
   gun:ws_send(State#state.conn_pid, ping),
   {noreply, State};
 handle_info({gun_upgrade, _, _, [<<"websocket">>], _}, State) ->
@@ -93,14 +93,14 @@ handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
 handle_info({gun_down, _, _, Reason, _, _}, State) ->
   gun:close(State#state.conn_pid),
-  lager:info("Cloud socket closed with reason: ~p will try to reconnect in 5 seconds", [Reason]),
+  lager:info("Client socket closed with reason: ~p will try to reconnect in 5 seconds", [Reason]),
   erlang:send_after(5 * 1000, self(), connect),
   {noreply, State#state{connected = false}};
-handle_info({send, Message}, State) ->
+handle_info({send, Message}, #state{connected = true} = State) ->
   lager:info("Sending message to socket ~p", [Message]),
   gun:ws_send(State#state.conn_pid, {text, jiffy:encode(Message)}),
   {noreply, State};
-handle_info({auth, send}, State) ->
+handle_info({auth, send}, #state{connected = true} = State) ->
   lager:info("Sending auth"),
   Claims = #{
     <<"UUID">> => State#state.user_id

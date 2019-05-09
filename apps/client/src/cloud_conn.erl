@@ -91,7 +91,7 @@ handle_info(ping, #state{connected = true} = State) ->
   gun:ws_send(State#state.conn_pid, ping),
   {noreply, State};
 handle_info(ping, State) ->
-  lager:info("Was going to ping client but not connected."),
+  lager:info("Was going to ping cloud but not connected."),
   {noreply, State};
 handle_info({gun_upgrade, _, _, [<<"websocket">>], _}, State) ->
   lager:info("Success on upgrade."),
@@ -118,7 +118,7 @@ handle_info({gun_error, _ConnPid, _, Reason}, State) ->
   lager:info("Gun error: ~p", [Reason]),
   {noreply, State};
 handle_info({gun_down, ConnPid, _, _, _, _}, State) ->
-  lager:info("Gun down, closing pid: ~p", [ConnPid]),
+  lager:info("HTTP connection down, closing pid: ~p", [ConnPid]),
   gun:close(ConnPid),
   {noreply, State};
 handle_info({send, Data}, State) ->
@@ -172,6 +172,7 @@ handle_info({http_request, Data}, State) ->
                         status => ResponseStatus,
                         body => ResponseBody };
                    {error, timeout} ->
+                     lager:info("Timeout"),
                      gun:close(ConnPid),
                      #{ status => 408 }
                  end
@@ -260,6 +261,7 @@ handle_info(Msg, State) ->
   {noreply, State}.
 
 connect_http(Host, Port) ->
+  lager:info("~p connecting to ~p : ~p", [self(), Host, Port]),
   case gun:open(Host, Port) of
     {ok, ConnPid} ->
       case gun:await_up(ConnPid) of
@@ -277,20 +279,18 @@ central_request(Method, Path, Headers, Body, Host, Port) ->
     {ok, Pid} ->
       case Method of
         <<"GET">> ->
-          Ref = gun:get(Pid, Path, maps:to_list(Headers)),
+          Ref = gun:get(Pid, Path, maps:to_list(Headers), #{retry => 0}),
           gun:data(Pid, Ref, fin, <<"">>),
           {Pid, Ref};
         <<"POST">> ->
-          Ref = gun:post(Pid, Path, maps:to_list(Headers)),
-          gun:data(Pid, Ref, fin, Body),
+          Ref = gun:post(Pid, Path, maps:to_list(Headers), Body, #{retry => 0}),
           {Pid, Ref};
         <<"PUT">> ->
-          Ref = gun:put(Pid, Path, maps:to_list(Headers)),
-          gun:data(Pid, Ref, fin, Body),
+          Ref = gun:put(Pid, Path, maps:to_list(Headers), Body, #{retry => 0}),
           {Pid, Ref};
         <<"DELETE">> ->
-          Ref = gun:delete(Pid, Path, maps:to_list(Headers)),
-          gun:data(Pid, Ref, fin, Body),
+          lager:info("Delete req ~p", [Path]),
+          Ref = gun:delete(Pid, Path, [], #{retry => 0}),
           {Pid, Ref}
       end;
     {error, E} -> {error, E}
