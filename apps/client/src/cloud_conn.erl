@@ -25,10 +25,12 @@
           priv_key      = undefined,
           hubot_api     = undefined,
           hubot_server  = undefined,
-          cloud_host    = undefined
+          cloud_host    = undefined,
+          last_pong     = undefined
          }).
 
 -define(PING_INTERVAL, 5000).
+-define(PONG_TMO, 15000). %% 15 seconds until timeout
 -define(CENTRAL_PORT, 80).
 -define(CLOUD_PORT, 80).
 -define(CLOUD_PATH, "/pi").
@@ -88,23 +90,39 @@ handle_info(upgrade_connection, State) ->
   gun:ws_upgrade(State#state.conn_pid, ?CLOUD_PATH),
   {noreply, State};
 handle_info(ping, #state{connected = true} = State) ->
+  Payload = jiffy:encode(#{ message_type => <<"ping">> }),
+  gun:ws_send(State#state.conn_pid, {text, Payload}),
   gun:ws_send(State#state.conn_pid, ping),
+  %% Wait 1s so we can be sure to get a server response
+  erlang:send_after(1000, self(), check_pong_timeout),
   {noreply, State};
+handle_info(check_pong_timeout, State) ->
+  Diff = timer:now_diff(erlang:timestamp(), State#state.last_pong) / 1000,
+  case Diff > ?PONG_TMO of
+    true ->
+      %% Cloud conn timed out, we should die.
+      lager:info("timed out: ~p > ~p", [Diff, ?PONG_TMO]),
+      self() ! {die, timeout},
+      {noreply, State};
+    false ->
+      {noreply, State}
+  end;
 handle_info(ping, State) ->
   lager:info("Was going to ping cloud but not connected."),
   {noreply, State};
+handle_info({die, Reason}, State) ->
+  {stop, Reason, State};
 handle_info({gun_upgrade, _, _, [<<"websocket">>], _}, State) ->
   lager:info("Success on upgrade."),
   {noreply, State#state{connected = true}};
 handle_info({gun_ws, _, _, {text, Msg}}, #state{connected = true} = State) ->
   Data = jiffy:decode(Msg, [return_maps]),
+  lager:info("Received msg: ~p", [Data]),
   #{<<"message_type">> := MessageType} = Data,
   handle_message(MessageType, Data),
   {noreply, State};
 handle_info({gun_ws, _, _, {text, Msg}}, State) ->
   lager:info("Was going to send ~p but not connected.", [Msg]),
-  {noreply, State};
-handle_info({gun_ws, _, _, _Frame}, State) ->
   {noreply, State};
 handle_info({gun_down, ConnPid, _, Reason, _, _}, #state{conn_pid = ConnPid} = State) ->
   gun:close(State#state.conn_pid),
@@ -242,6 +260,8 @@ handle_info({app_disconnect, Data}, State) ->
       lager:info("Received app disconnect from user: ~p but was already not on the socket list.", [UserId]),
       {noreply, State}
   end;
+handle_info({pong}, State) ->
+  {noreply, State#state{last_pong = erlang:timestamp()}};
 handle_info({'DOWN', Ref, process, Pid, Reason}, State) ->
   erlang:demonitor(Ref),
   Element = find(Pid, 1, State#state.client_list),
@@ -296,6 +316,8 @@ central_request(Method, Path, Headers, Body, Host, Port) ->
     {error, E} -> {error, E}
   end.
 
+handle_message(<<"pong">>, _) ->
+  self() ! {pong};
 handle_message(<<"auth_req">>, _) ->
   self() ! {auth, send};
 handle_message(<<"auth_success">>, _) ->
