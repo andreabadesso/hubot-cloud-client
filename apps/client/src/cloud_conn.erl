@@ -173,7 +173,7 @@ handle_info({http_request, Data}, State) ->
     <<"method">> := Method,
     <<"path">> := Path} = Request,
 
-  Response = case central_request(Method, Path, Headers, Body, State#state.hubot_server, ?CENTRAL_PORT) of
+  Response = case central_request(Method, Path, Headers, Body, State#state.hubot_api, ?CENTRAL_PORT) of
                {error, Error} ->
                  lager:info("Received error from connection. ~p", [Error]),
                  #{ status => 500 };
@@ -296,6 +296,7 @@ connect_http(Host, Port) ->
   end.
 
 central_request(Method, Path, Headers, Body, Host, Port) ->
+  lager:info("~p ~p:~p~p", [Method, Host, Port, Path]),
   case connect_http(Host, Port) of
     {ok, Pid} ->
       case Method of
