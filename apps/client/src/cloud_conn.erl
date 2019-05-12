@@ -54,7 +54,8 @@ init(_) ->
              priv_key = PrivKey,
              hubot_api = binary_to_list(HubotApi),
              hubot_server = binary_to_list(HubotServer),
-             cloud_host = binary_to_list(CloudHost)
+             cloud_host = binary_to_list(CloudHost),
+             last_pong = erlang:timestamp()
             },
   erlang:send_after(5, self(), connect),
   timer:send_interval(?PING_INTERVAL, ping),

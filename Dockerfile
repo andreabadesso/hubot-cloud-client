@@ -1,4 +1,4 @@
-FROM erlang:21 as builder
+FROM arm32v7/erlang:21 as builder
 
 WORKDIR /hubot-cloud-client
 
@@ -9,7 +9,7 @@ RUN rebar3 as prod tar && \
     tar -zxvf /hubot-cloud-client/_build/prod/rel/*/*.tar.gz -C /opt/rel && \
     rm -rf /hubot-cloud-client/
 
-FROM erlang:21-slim
+FROM arm32v7/erlang:21-slim
 
 COPY --from=builder /opt/rel/ /opt/rel/
 
