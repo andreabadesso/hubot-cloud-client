@@ -283,7 +283,7 @@ handle_info(Msg, State) ->
 
 connect_http(Host, Port) ->
   lager:info("~p connecting to ~p : ~p", [self(), Host, Port]),
-  case gun:open(Host, Port) of
+  case gun:open(Host, Port, #{ retry => 0 }) of
     {ok, ConnPid} ->
       case gun:await_up(ConnPid) of
         {ok, _} ->
